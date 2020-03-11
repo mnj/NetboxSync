@@ -44,7 +44,12 @@ def get_vcenter_clusters():
 def get_netbox_clusters():
     netbox_clusters = []
 
+    try:
     nb_clusters = netbox_client.virtualization.clusters.all()
+    except Exception as ex: 
+        logger.error("Failed getting a list of netbox clusters")
+        logger.exception(ex)
+        raise SystemExit(-1)
     
     for nb_cluster in nb_clusters:
         if nb_cluster.type.name == "vSphere":
