@@ -21,9 +21,10 @@ class VMwareCluster:
         self.vcenter_persistent_id = vcenter_persistent_id
 
 class NetboxCluster:
-    def __init__(self, name, vcenter_persistent_id):
+    def __init__(self, name, vcenter_persistent_id, raw_netbox_api_record):
         self.name = name
         self.vcenter_persistent_id = vcenter_persistent_id
+        self.raw_netbox_api_record = raw_netbox_api_record
 
 def get_vcenter_clusters():
     vcenter_clusters = []
@@ -47,7 +48,8 @@ def get_netbox_clusters():
     for nb_cluster in nb_clusters:
         if str(nb_cluster.type) == "vSphere":
             netbox_clusters.append( NetboxCluster( name = nb_cluster.name, 
-                                                   vcenter_persistent_id = nb_cluster.custom_fields.get('vcenter_persistent_id')) )
+                                                   vcenter_persistent_id = nb_cluster.custom_fields.get('vcenter_persistent_id'),
+                                                   raw_netbox_api_record = nb_cluster) )
         
     return netbox_clusters
 
