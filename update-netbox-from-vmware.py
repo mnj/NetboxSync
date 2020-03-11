@@ -47,7 +47,7 @@ def get_netbox_clusters():
     nb_clusters = netbox_client.virtualization.clusters.all()
     
     for nb_cluster in nb_clusters:
-        if str(nb_cluster.type) == "vSphere":
+        if nb_cluster.type.name == "vSphere":
             netbox_clusters.append( NetboxCluster( name = nb_cluster.name, 
                                                    vcenter_persistent_id = nb_cluster.custom_fields.get('vcenter_persistent_id'),
                                                    raw_netbox_api_record = nb_cluster) )
