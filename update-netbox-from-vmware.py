@@ -9,6 +9,7 @@ import os
 from pyVim import connect
 from pyVmomi import vmodl
 from pyVmomi import vim
+from pprint import pprint
 
 vcenter_session = None
 vcenter_content = None
@@ -71,6 +72,11 @@ def debug_print_object_info(obj):
     print(">x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>")
     for attr in dir(obj):
         print("obj.%s = %r" % (attr, getattr(obj, attr)))
+    print("<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<")
+
+def debug_print_netbox_object(obj):
+    print(">x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>")
+    pprint(dict(obj))
     print("<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<z<")
 
 def initialize_vcenter_connection():
