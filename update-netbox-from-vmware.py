@@ -67,10 +67,19 @@ def update_netbox_clusters():
     # Find clusters present in netbox, but not in vsphere, and add comment
     # about it, on the netbox cluster object
     for nbc1 in netbox_clusters:
-        if any(vc1.vcenter_persistent_id == nbc1.vcenter_persistent_id for vc1 in vcenter_clusters ):
-            logging.info(f"Cluster: {nbc1.name} with vCenter_ID: {nbc1.vcenter_persistent_id} exists in vcenter, nothing to do")
+        if any(vc1.vcenter_persistent_id == nbc1.vcenter_persistent_id for vc1 in vcenter_clusters):
+            logger.info(f"Cluster: {nbc1.name} with vCenter_ID: {nbc1.vcenter_persistent_id} exists in vcenter, nothing to do")
         else:
-            logging.info(f"Cluster: {nbc1.name} with vCenter_ID: {nbc1.vcenter_persistent_id} does NOT exists in vcenter, adding comment to netbox")
+            logger.info(f"Cluster: {nbc1.name} with vCenter_ID: {nbc1.vcenter_persistent_id} does NOT exists in vcenter, adding comment to netbox")
+            
+            try:
+                nbc1_update = netbox_client.virtualization.clusters.get(nbc1.raw_netbox_api_record.id)
+                nbc1_update.comments = "No longer present in vCenter, verify manually, and delete this object in netbox"
+                if nbc1_update.save():
+                    logger.info("Successfully updated cluster object in netbox")
+            except Exception as ex:
+                logger.warn("Failed updating the cluster object in netbox")
+                logger.exception(ex)
             
     
 def debug_print_object_info(obj):
