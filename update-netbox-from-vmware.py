@@ -26,7 +26,7 @@ class NetboxCluster:
         self.name = name
         self.vcenter_persistent_id = vcenter_persistent_id
         self.raw_netbox_api_record = raw_netbox_api_record
-
+        
 def get_vcenter_clusters():
     vcenter_clusters = []
     
@@ -45,7 +45,7 @@ def get_netbox_clusters():
     netbox_clusters = []
 
     try:
-    nb_clusters = netbox_client.virtualization.clusters.all()
+        nb_clusters = netbox_client.virtualization.clusters.all()
     except Exception as ex: 
         logger.error("Failed getting a list of netbox clusters")
         logger.exception(ex)
@@ -53,7 +53,7 @@ def get_netbox_clusters():
     
     for nb_cluster in nb_clusters:
         if nb_cluster.type.name == "vSphere":
-            netbox_clusters.append( NetboxCluster( name = nb_cluster.name, 
+            netbox_clusters.append( NetboxCluster( name = nb_cluster.name,
                                                    vcenter_persistent_id = nb_cluster.custom_fields.get('vcenter_persistent_id'),
                                                    raw_netbox_api_record = nb_cluster) )
         
@@ -80,8 +80,25 @@ def update_netbox_clusters():
             except Exception as ex:
                 logger.warn("Failed updating the cluster object in netbox")
                 logger.exception(ex)
-            
-    
+
+    # Find clusters present in vcenter, but not in netbox
+    for vc2 in vcenter_clusters:
+        if any(nbc2.vcenter_persistent_id == vc2.vcenter_persistent_id for nbc2 in netbox_clusters):
+            logger.info(f"Cluster: {vc2.name} with vCenter_ID: {vc2.vcenter_persistent_id} exists in netbox, nothing to do")
+        else:
+            logger.info(f"Cluster: {vc2.name} with vCenter_ID: {vc2.vcenter_persistent_id} does NOT exists in netbox, adding the cluster to netbox")
+
+            try:
+                # Get the cluster type for vsphere
+                cluster_type = netbox_client.virtualization.cluster_types.get(name="vSphere")
+
+                nbc2_create = netbox_client.virtualization.clusters.create( name = vc2.name,
+                                                                            type = cluster_type.id)
+                logger.info("Cluster object created successfully in netbox")
+            except Exception as ex:
+                logger.warn("Failed creating the cluster object in netbox")
+                logger.exception(ex)
+                
 def debug_print_object_info(obj):
     print(">x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>")
     for attr in dir(obj):
