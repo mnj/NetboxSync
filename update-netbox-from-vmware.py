@@ -166,6 +166,8 @@ def update_netbox():
                     nbvm1_update.disk = vcvm.disk_gb
                     logger.info(f"Found change, VC VM disk size (GB): {vcvm.disk_gb}, NB VM disk size (GB): {nbvm1.raw_netbox_api_record.disk}")
                 
+                # TODO: Set primary IPs on the VM if they are changed, rest is defined on the interface associated to the VM
+
                 if vcpu_Changed or memory_mb_Changed or comment_Changed or disk_Changed:
                     logger.info(f"Updating VM: {nbvm1.name} in netbox, since changes was detected!")
                     
