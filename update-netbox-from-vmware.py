@@ -30,11 +30,12 @@ class NetboxCluster:
         self.raw_netbox_api_record = raw_netbox_api_record
 
 class VMwareVM:
-    def __init__(self, name, uuid, vcpu, memory_mb, comment, power_state, vmtools_status, primary_ipaddress, is_template, custom_attributes, cluster_name):
+    def __init__(self, name, uuid, vcpu, memory_mb, disk_gb, comment, power_state, vmtools_status, primary_ipaddress, is_template, custom_attributes, cluster_name):
         self.name = name
         self.uuid = uuid
         self.vcpu = vcpu
         self.memory_mb = memory_mb
+        self.disk_gb = int(disk_gb)
         self.comment = comment
         self.power_state = power_state
         self.vmtools_status = vmtools_status
@@ -232,14 +233,17 @@ def get_vcenter_vms():
         is_template = vm["config.template"]
         power_state = vm["runtime.powerState"]
         vmtools_status = vm["guest.toolsRunningStatus"]
-        # TODO: Add disk usage
+        disk_size_gb = 0
+        for device in vm["config.hardware.device"]:
+            if type(device).__name__ == 'vim.vm.device.VirtualDisk':
+                disk_size_gb += (device.capacityInKB / 1024 / 1024)
 
         # The API for getting _all_ ips are broken, the limit seems to be around 4 IP addresses are being returned
         # So for now, just take whatever IP is listed as the default, and figure out a way to fix it later on
         # This might be somewhat related to the vmtools version installed, needs further investigation
         primary_ipaddress = vm.get("guest.ipAddress") or "" # Might not exist
 
-        logging.debug(f"uuid: {uuid}, vcpus: {vcpus}, memory: {memory_mb}, comment: {comment}, is_template: {is_template}, power_state: {power_state}, vmtools_status: {vmtools_status}, primary_ip: {primary_ipaddress}")
+        logging.debug(f"uuid: {uuid}, vcpus: {vcpus}, memory: {memory_mb}, comment: {comment}, is_template: {is_template}, power_state: {power_state}, vmtools_status: {vmtools_status}, primary_ip: {primary_ipaddress}, disksize: { disk_size_gb}")
         
         custom_attributes = {}
         vm_availablefield = vm["availableField"]
@@ -253,6 +257,7 @@ def get_vcenter_vms():
                                       uuid = uuid,
                                       vcpu = vcpus,
                                       memory_mb = memory_mb,
+                                      disk_gb = disk_size_gb,
                                       comment = comment,
                                       power_state = power_state,
                                       vmtools_status = vmtools_status,
