@@ -138,32 +138,52 @@ def update_netbox():
     for nbvm1 in netbox_vms:
         if any(vcvm1.uuid == nbvm1.vcenter_persistent_id for vcvm1 in vcenter_vms):
             logger.info(f"VM: {nbvm1.name} with vCenter_ID: {nbvm1.vcenter_persistent_id} exists in vcenter, checking if anything has changed")
-            foundChanges = False
-
+            
             # next will raise errors if not found!, but we check above with any() so it is safe here
             vcvm = next(x for x in vcenter_vms if x.uuid == nbvm1.vcenter_persistent_id)
 
             try:
-                nbvm1_update = netbox_client.virtualization.virtual_machines.get(nbvm1.raw_netbox_api_record.id)
+                vcpu_Changed = False
+                memory_mb_Changed = False
+                comment_Changed = False
+                disk_Changed = False
 
+                # Not happy with this way of detecting changes, but it works..
                 if int(vcvm.vcpu) != int(nbvm1.raw_netbox_api_record.vcpus):
-                    foundChanges = True
+                    vcpu_Changed = True
                     nbvm1_update.vcpus = vcvm.vcpu
                     logger.info(f"Found change, VC VM vcpu: {vcvm.vcpu}, NB VM vcpu: {nbvm1.raw_netbox_api_record.vcpus}")
                 elif int(vcvm.memory_mb) != int(nbvm1.raw_netbox_api_record.memory):
-                    foundChanges = True
+                    memory_mb_Changed = True
                     nbvm1_update.memory = vcvm.memory_mb
                     logger.info(f"Found change, VC VM memory: {vcvm.memory_mb}, NB VM memory: {nbvm1.raw_netbox_api_record.memory}")
                 elif vcvm.comment != nbvm1.raw_netbox_api_record.comments and vcvm.comment is not None:
-                    foundChanges = True
+                    comment_Changed = True
                     nbvm1_update.comments = vcvm.comment
-                    logger.info(f"Found change, VC VM comment: {vcvm.comment}, NB VM comment: {nbvm1.raw_netbox_api_record.comments}")
-
-                if foundChanges:
-                    logger.info(f"Update VM: {nbvm1.name} in netbox, since changes was detected!")
+                    logger.info(f"Found change, VC VM comment: {vcvm.comment}, NB VM comment: {nbvm1.raw_netbox_api_record.comments}")                
+                elif nbvm1.raw_netbox_api_record.disk is None or int(vcvm.disk_gb) != int(nbvm1.raw_netbox_api_record.disk):
+                    disk_Changed = True
+                    nbvm1_update.disk = vcvm.disk_gb
+                    logger.info(f"Found change, VC VM disk size (GB): {vcvm.disk_gb}, NB VM disk size (GB): {nbvm1.raw_netbox_api_record.disk}")
+                
+                if vcpu_Changed or memory_mb_Changed or comment_Changed or disk_Changed:
+                    logger.info(f"Updating VM: {nbvm1.name} in netbox, since changes was detected!")
                     
+                    nbvm1_update = netbox_client.virtualization.virtual_machines.get(nbvm1.raw_netbox_api_record.id)
+
+                    if vcpu_Changed:
+                        nbvm1_update.vcpus = vcvm.vcpu
+                    if memory_mb_Changed:
+                        nbvm1_update.memory = vcvm.memory_mb
+                    if comment_Changed:
+                        nbvm1_update.comments = vcvm.comment
+                    if disk_Changed:
+                        nbvm1_update.disk = vcvm.disk_gb
+
                     if nbvm1_update.save():
                         logger.info("Successfully updated VM object in netbox")
+                else:
+                    logger.info(f"No changes detected for VM: { nbvm1.name }")
             except Exception as ex:
                 logger.warn("Failed updating the VM object in netbox")
                 logger.exception(ex)
@@ -217,7 +237,7 @@ def get_vcenter_vms():
 
     vm_properties = [ "name", "config.instanceUuid", "summary.config.numCpu", "summary.config.memorySizeMB",
                       "config.annotation", "config.template", "runtime.powerState", "guest.toolsRunningStatus",
-                      "guest.ipAddress", "summary.runtime.host", "availableField", "customValue" ]
+                      "guest.ipAddress", "summary.runtime.host", "availableField", "customValue", "config.hardware.device" ]
     
     vm_data = _get_vcenter_vms(container_view=vmsView, vm_properties=vm_properties)
 
@@ -230,14 +250,16 @@ def get_vcenter_vms():
         vcpus = vm["summary.config.numCpu"]
         memory_mb = vm["summary.config.memorySizeMB"]
         comment = vm.get("config.annotation") or "" # Might not exist
+        comment = comment.rstrip()
         is_template = vm["config.template"]
         power_state = vm["runtime.powerState"]
         vmtools_status = vm["guest.toolsRunningStatus"]
+        
         disk_size_gb = 0
         for device in vm["config.hardware.device"]:
             if type(device).__name__ == 'vim.vm.device.VirtualDisk':
                 disk_size_gb += (device.capacityInKB / 1024 / 1024)
-
+        
         # The API for getting _all_ ips are broken, the limit seems to be around 4 IP addresses are being returned
         # So for now, just take whatever IP is listed as the default, and figure out a way to fix it later on
         # This might be somewhat related to the vmtools version installed, needs further investigation
@@ -266,7 +288,6 @@ def get_vcenter_vms():
                                       custom_attributes = custom_attributes,
                                       cluster_name = cluster_name ) )
 
-    raise SystemExit(-1)
     return vcenter_vms
 
 def _get_vcenter_vms(container_view, vm_properties):
@@ -387,10 +408,10 @@ def initialize_netbox_client():
 def initialize_logging():
     global logger
     logger = logging.getLogger()
-    logger.setLevel(logging.INFO)
+    logger.setLevel(logging.DEBUG)
 
     ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
+    ch.setLevel(logging.DEBUG)
     
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     ch.setFormatter(formatter)
