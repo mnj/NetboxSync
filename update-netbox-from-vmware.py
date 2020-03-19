@@ -19,9 +19,10 @@ netbox_client = None
 logger = None
 
 class VMwareCluster:
-    def __init__(self, name, vcenter_persistent_id):
+    def __init__(self, name, vcenter_persistent_id, hosts):
         self.name = name
         self.vcenter_persistent_id = vcenter_persistent_id
+        self.hosts = hosts
 
 class NetboxCluster:
     def __init__(self, name, vcenter_persistent_id, raw_netbox_api_record):
@@ -58,8 +59,10 @@ def get_vcenter_clusters():
     # We only have one datacenter, but lets loop through the list of them anyway
     for vcenter_datacenter in vcenter_datacenters:
         for vcenter_cluster in vcenter_datacenter.hostFolder.childEntity:
+            hosts = [ x._moId for x in vcenter_cluster.host ]
             vcenter_clusters.append( VMwareCluster( name = vcenter_cluster.name, 
-                                                    vcenter_persistent_id = vcenter_cluster._moId) )
+                                                    vcenter_persistent_id = vcenter_cluster._moId,
+                                                    hosts = hosts ) )
 
     return vcenter_clusters
 
