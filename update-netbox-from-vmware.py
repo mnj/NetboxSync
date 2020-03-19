@@ -147,7 +147,7 @@ def update_netbox():
                 memory_mb_Changed = False
                 comment_Changed = False
                 disk_Changed = False
-
+              
                 # Not happy with this way of detecting changes, but it works..
                 if int(vcvm.vcpu) != int(nbvm1.raw_netbox_api_record.vcpus):
                     vcpu_Changed = True
@@ -352,8 +352,8 @@ def get_netbox_vms():
     
     for nb_vm in nb_vms:
         netbox_vms.append( NetboxVM( name = nb_vm.name,
-                                                   vcenter_persistent_id = nb_vm.custom_fields.get('vcenter_persistent_id'),
-                                                   raw_netbox_api_record = nb_vm ) )
+                                     vcenter_persistent_id = nb_vm.custom_fields.get('vcenter_persistent_id'),
+                                     raw_netbox_api_record = nb_vm ) )
     
     return netbox_vms
 
