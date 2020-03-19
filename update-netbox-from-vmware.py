@@ -5,6 +5,8 @@ import ipaddress
 import urllib3
 import logging 
 import os
+import datetime
+import functools
 
 from pyVim import connect
 from pyVmomi import vmodl
@@ -27,6 +29,26 @@ class NetboxCluster:
         self.vcenter_persistent_id = vcenter_persistent_id
         self.raw_netbox_api_record = raw_netbox_api_record
         
+class VMwareVM:
+    def __init__(self, name, uuid, vcpu, memory_mb, comment, power_state, vmtools_status, primary_ipaddress, is_template, custom_attributes, cluster_name):
+        self.name = name
+        self.uuid = uuid
+        self.vcpu = vcpu
+        self.memory_mb = memory_mb
+        self.comment = comment
+        self.power_state = power_state
+        self.vmtools_status = vmtools_status
+        self.primary_ipaddress = primary_ipaddress
+        self.is_template = is_template
+        self.custom_attributes = custom_attributes
+        self.cluster_name = cluster_name
+
+class NetboxVM:
+    def __init__(self, name, vcenter_persistent_id, raw_netbox_api_record):
+            self.name = name
+            self.vcenter_persistent_id = vcenter_persistent_id
+            self.raw_netbox_api_record = raw_netbox_api_record
+
 def get_vcenter_clusters():
     vcenter_clusters = []
     
@@ -99,6 +121,113 @@ def update_netbox_clusters():
                 logger.warn("Failed creating the cluster object in netbox")
                 logger.exception(ex)
                 
+def get_vcenter_vms():
+    vcenter_vms = []
+    
+    vmsView = vcenter_content.viewManager.CreateContainerView( vcenter_content.rootFolder, [vim.VirtualMachine], True )
+    
+    for vm in vmsView.view:
+        logging.info(f"Gathering information about VM: {vm.name}")
+        a = datetime.datetime.now()
+        # instanceUuid is only unique per vcenter, we need to combine it with the vcenter uuid 
+        # if we want to be supporting multiple vcenters, currently we dont.
+
+        # About 90ms faster per call, to cache to local variables first
+        vm_config = vm.config
+        vm_summary_config = vm.summary.config
+        vm_guest = vm.guest
+        vm_runtime = vm.runtime
+
+        uuid = vm_config.instanceUuid
+        vcpus = vm_summary_config.numCpu
+        memory_mb = vm_summary_config.memorySizeMB
+        comment = vm_config.annotation
+        is_template = vm_config.template
+        power_state = vm_runtime.powerState
+        vmtools_status = vm_guest.toolsRunningStatus
+        # TODO: Add disk usage
+
+        # The API for getting _all_ ips are broken, the limit seems to be around 4 IP addresses are being returned
+        # So for now, just take whatever IP is listed as the default, and figure out a way to fix it later on
+        primary_ipaddress = vm_guest.ipAddress
+
+        logging.debug(f"uuid: {uuid}, vcpus: {vcpus}, memory: {memory_mb}, comment: {comment}, is_template: {is_template}, power_state: {power_state}, vmtools_status: {vmtools_status}, primary_ip: {primary_ipaddress}")
+
+        custom_attributes = {}
+        vm_availablefield = vm.availableField
+        for x in vm.customValue:
+            fieldname = _vcenter_get_customfield_fieldname(vm_availablefield, x)
+            custom_attributes[fieldname] = x.value
+        
+        # cluster_name = vm.summary.runtime.host.parent.name
+        cluster_name = _vcenter_get_clustername(vm_runtime.host)
+
+        # This didn't really return all ips, only up to 4 ips, so not optimal, only the vcenter ui api endpoint returns the correct info
+        # Just here for future reference
+        #
+        # print(f"\t { len(vm.guest.net) }")
+        # for nic in vm.guest.net:
+        #     nic_ipconfig = nic.ipConfig
+        #     if nic_ipconfig is not None:
+        #         addresses = nic_ipconfig.ipAddress
+        #         # print(len( nic.ipConfig.ipAddress))
+        #         if len( nic.ipConfig.ipAddress) >= 4:
+        #             print(f"VM: {vm.name} has 4 or more ip addresses defined, we are probably not getting all ips from the API")
+            # for adr in addresses:
+            #     print(adr.ipAddress)
+            # debug_print_object_info(nic)
+            # raise SystemExit(-1)
+
+        vcenter_vms.append( VMwareVM( name = vm.name,
+                                      uuid = uuid,
+                                      vcpu = vcpus,
+                                      memory_mb = memory_mb,
+                                      comment = comment,
+                                      power_state = power_state,
+                                      vmtools_status = vmtools_status,
+                                      primary_ipaddress = primary_ipaddress,
+                                      is_template = is_template,
+                                      custom_attributes = custom_attributes,
+                                      cluster_name = cluster_name ) )
+
+        b = datetime.datetime.now()
+        c = b - a
+        logger.info(f"Time per vm: {c.microseconds / 1000 } ms")
+
+    return vcenter_vms
+
+@functools.lru_cache(maxsize=32)
+def _vcenter_get_clustername(host):
+    # This function response is cached, since we will call it often
+    return str(host.parent.name)
+
+def _netbox_get_cluster_id(netbox_clusters, vcenter_cluster_name):
+    for cluster in netbox_clusters:
+        if cluster.raw_netbox_api_record.name == vcenter_cluster_name:
+            return cluster.raw_netbox_api_record.id
+
+def _vcenter_get_customfield_fieldname(available_fields, custom_field):
+    for x in available_fields:
+        if x.key == custom_field.key:
+            return x.name
+
+def get_netbox_vms():
+    netbox_vms = []
+
+    try:
+        nb_vms = netbox_client.virtualization.virtual_machines.all()
+    except Exception as ex: 
+        logger.error("Failed getting a list of netbox vms")
+        logger.exception(ex)
+        raise SystemExit(-1)
+    
+    for nb_vm in nb_vms:
+        netbox_vms.append( NetboxVM( name = nb_vm.name,
+                                                   vcenter_persistent_id = nb_vm.custom_fields.get('vcenter_persistent_id'),
+                                                   raw_netbox_api_record = nb_vm ) )
+    
+    return netbox_vms
+
 def debug_print_object_info(obj):
     print(">x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>")
     for attr in dir(obj):
