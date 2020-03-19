@@ -5,7 +5,6 @@ import ipaddress
 import urllib3
 import logging 
 import os
-import datetime
 import functools
 
 from pyVim import connect
@@ -214,60 +213,43 @@ def get_vcenter_vms():
     vcenter_vms = []
     
     vmsView = vcenter_content.viewManager.CreateContainerView( vcenter_content.rootFolder, [vim.VirtualMachine], True )
+
+    vm_properties = [ "name", "config.instanceUuid", "summary.config.numCpu", "summary.config.memorySizeMB",
+                      "config.annotation", "config.template", "runtime.powerState", "guest.toolsRunningStatus",
+                      "guest.ipAddress", "summary.runtime.host", "availableField", "customValue" ]
     
-    for vm in vmsView.view:
-        logging.info(f"Gathering information about VM: {vm.name}")
-        a = datetime.datetime.now()
+    vm_data = _get_vcenter_vms(container_view=vmsView, vm_properties=vm_properties)
+
+    for vm in vm_data:
+        logging.info(f"Gathering information about VM: { vm['name'] }")
         # instanceUuid is only unique per vcenter, we need to combine it with the vcenter uuid 
         # if we want to be supporting multiple vcenters, currently we dont.
 
-        # About 90ms faster per call, to cache to local variables first
-        vm_config = vm.config
-        vm_summary_config = vm.summary.config
-        vm_guest = vm.guest
-        vm_runtime = vm.runtime
-
-        uuid = vm_config.instanceUuid
-        vcpus = vm_summary_config.numCpu
-        memory_mb = vm_summary_config.memorySizeMB
-        comment = vm_config.annotation
-        is_template = vm_config.template
-        power_state = vm_runtime.powerState
-        vmtools_status = vm_guest.toolsRunningStatus
+        uuid = vm["config.instanceUuid"]
+        vcpus = vm["summary.config.numCpu"]
+        memory_mb = vm["summary.config.memorySizeMB"]
+        comment = vm.get("config.annotation") or "" # Might not exist
+        is_template = vm["config.template"]
+        power_state = vm["runtime.powerState"]
+        vmtools_status = vm["guest.toolsRunningStatus"]
         # TODO: Add disk usage
 
         # The API for getting _all_ ips are broken, the limit seems to be around 4 IP addresses are being returned
         # So for now, just take whatever IP is listed as the default, and figure out a way to fix it later on
-        primary_ipaddress = vm_guest.ipAddress
+        # This might be somewhat related to the vmtools version installed, needs further investigation
+        primary_ipaddress = vm.get("guest.ipAddress") or "" # Might not exist
 
         logging.debug(f"uuid: {uuid}, vcpus: {vcpus}, memory: {memory_mb}, comment: {comment}, is_template: {is_template}, power_state: {power_state}, vmtools_status: {vmtools_status}, primary_ip: {primary_ipaddress}")
-
+        
         custom_attributes = {}
-        vm_availablefield = vm.availableField
-        for x in vm.customValue:
+        vm_availablefield = vm["availableField"]
+        for x in vm["customValue"]:
             fieldname = _vcenter_get_customfield_fieldname(vm_availablefield, x)
             custom_attributes[fieldname] = x.value
         
-        # cluster_name = vm.summary.runtime.host.parent.name
-        cluster_name = _vcenter_get_clustername(vm_runtime.host)
+        cluster_name = _vcenter_get_clustername(vm['summary.runtime.host']._moId)
 
-        # This didn't really return all ips, only up to 4 ips, so not optimal, only the vcenter ui api endpoint returns the correct info
-        # Just here for future reference
-        #
-        # print(f"\t { len(vm.guest.net) }")
-        # for nic in vm.guest.net:
-        #     nic_ipconfig = nic.ipConfig
-        #     if nic_ipconfig is not None:
-        #         addresses = nic_ipconfig.ipAddress
-        #         # print(len( nic.ipConfig.ipAddress))
-        #         if len( nic.ipConfig.ipAddress) >= 4:
-        #             print(f"VM: {vm.name} has 4 or more ip addresses defined, we are probably not getting all ips from the API")
-            # for adr in addresses:
-            #     print(adr.ipAddress)
-            # debug_print_object_info(nic)
-            # raise SystemExit(-1)
-
-        vcenter_vms.append( VMwareVM( name = vm.name,
+        vcenter_vms.append( VMwareVM( name = vm['name'],
                                       uuid = uuid,
                                       vcpu = vcpus,
                                       memory_mb = memory_mb,
@@ -279,16 +261,48 @@ def get_vcenter_vms():
                                       custom_attributes = custom_attributes,
                                       cluster_name = cluster_name ) )
 
-        b = datetime.datetime.now()
-        c = b - a
-        logger.info(f"Time per vm: {c.microseconds / 1000 } ms")
-
+    raise SystemExit(-1)
     return vcenter_vms
+
+def _get_vcenter_vms(container_view, vm_properties):
+  
+    object_spec = vmodl.query.PropertyCollector.ObjectSpec( obj = container_view,
+                                                            skip = True)
+
+    traversal_spec = vmodl.query.PropertyCollector.TraversalSpec( name = 'traverseEntities',
+                                                                  path = 'view',
+                                                                  skip = False,
+                                                                  type = container_view.__class__ )
+
+    object_spec.selectSet = [traversal_spec]
+
+    property_spec = vmodl.query.PropertyCollector.PropertySpec( type = vim.VirtualMachine,
+                                                                pathSet = vm_properties )
+
+    filter_spec = vmodl.query.PropertyCollector.FilterSpec( objectSet = [object_spec],
+                                                            propSet = [property_spec] )
+
+    vm_properties = vcenter_content.propertyCollector.RetrieveContents([filter_spec])
+
+    vm_data = []
+    for vm_property in vm_properties:
+        properties = {}
+        for prop in vm_property.propSet:
+            properties[prop.name] = prop.val
+            properties['obj'] = vm_property.obj
+
+        vm_data.append(properties)
+    return vm_data
 
 @functools.lru_cache(maxsize=32)
 def _vcenter_get_clustername(host):
-    # This function response is cached, since we will call it often
-    return str(host.parent.name)
+    clusters = get_vcenter_clusters()
+    for cluster in clusters:
+        for cluster_host in cluster.hosts:
+            if cluster_host.endswith(host):
+                return cluster.name
+
+    return None
 
 def _netbox_get_cluster_id(netbox_clusters, vcenter_cluster_name):
     for cluster in netbox_clusters:
