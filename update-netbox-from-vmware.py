@@ -50,6 +50,7 @@ class NetboxVM:
             self.vcenter_persistent_id = vcenter_persistent_id
             self.raw_netbox_api_record = raw_netbox_api_record
 
+@functools.lru_cache(maxsize=32)
 def get_vcenter_clusters():
     vcenter_clusters = []
     
