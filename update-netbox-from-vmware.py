@@ -81,7 +81,7 @@ def get_netbox_clusters():
         
     return netbox_clusters
 
-def update_netbox_clusters():
+def update_netbox():
 
     vcenter_clusters = get_vcenter_clusters()
     netbox_clusters = get_netbox_clusters()
@@ -298,7 +298,7 @@ def main():
     initialize_vcenter_connection()
     initialize_netbox_client()
 
-    update_netbox_clusters()
+    update_netbox()
 
 if __name__ == "__main__":
     main()
