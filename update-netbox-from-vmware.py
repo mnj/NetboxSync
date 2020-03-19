@@ -113,9 +113,12 @@ def update_netbox():
             try:
                 # Get the cluster type for vsphere
                 cluster_type = netbox_client.virtualization.cluster_types.get(name="vSphere")
+                custom_fields = {}
+                custom_fields["vcenter_persistent_id"] = vc2.vcenter_persistent_id
 
                 nbc2_create = netbox_client.virtualization.clusters.create( name = vc2.name,
-                                                                            type = cluster_type.id)
+                                                                            type = cluster_type.id,
+                                                                            custom_fields = custom_fields )
                 logger.info("Cluster object created successfully in netbox")
             except Exception as ex:
                 logger.warn("Failed creating the cluster object in netbox")
