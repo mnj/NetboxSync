@@ -259,7 +259,7 @@ def get_vcenter_vms():
         
         disk_size_gb = 0
         for device in vm["config.hardware.device"]:
-            if type(device).__name__ == 'vim.vm.device.VirtualDisk':
+             if isinstance(device, vim.vm.device.VirtualDisk):
                 disk_size_gb += (device.capacityInKB / 1024 / 1024)
         
         # The API for getting _all_ ips are broken, the limit seems to be around 4 IP addresses are being returned
