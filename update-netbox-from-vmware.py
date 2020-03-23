@@ -147,6 +147,7 @@ def update_netbox():
                 memory_mb_Changed = False
                 comment_Changed = False
                 disk_Changed = False
+                custom_fields_Changed = False
               
                 # Not happy with this way of detecting changes, but it works..
                 if int(vcvm.vcpu) != int(nbvm1.raw_netbox_api_record.vcpus):
@@ -159,16 +160,26 @@ def update_netbox():
                     logger.info(f"Found change, VC VM memory: {vcvm.memory_mb}, NB VM memory: {nbvm1.raw_netbox_api_record.memory}")
                 elif vcvm.comment != nbvm1.raw_netbox_api_record.comments and vcvm.comment is not None:
                     comment_Changed = True
-                    nbvm1_update.comments = vcvm.comment
-                    logger.info(f"Found change, VC VM comment: {vcvm.comment}, NB VM comment: {nbvm1.raw_netbox_api_record.comments}")                
+                    logger.info(f"Found change, VC VM comment: {vcvm.comment}, NB VM comment: {nbvm1.raw_netbox_api_record.comments}")
                 elif nbvm1.raw_netbox_api_record.disk is None or int(vcvm.disk_gb) != int(nbvm1.raw_netbox_api_record.disk):
                     disk_Changed = True
                     nbvm1_update.disk = vcvm.disk_gb
                     logger.info(f"Found change, VC VM disk size (GB): {vcvm.disk_gb}, NB VM disk size (GB): {nbvm1.raw_netbox_api_record.disk}")
                 
+                # Our company specific custom netbox attribute, if it's defined, ignored otherwise
+                # TODO: This should be optimized better to handle any custem fields, not just our own
+                if "SystemID" in vcvm.custom_attributes and "SystemID" in nbvm1.raw_netbox_api_record.custom_fields:
+                    vc_SystemID = vcvm.custom_attributes["SystemID"]
+                    nb_SystemID = nbvm1.raw_netbox_api_record.custom_fields["SystemID"]
+    
+                    # Strip whitespaces in case the vcenter returns an empty string
+                    if vc_SystemID != nb_SystemID and len(vc_SystemID.strip()) > 0:
+                        custom_fields_Changed = True
+                        logger.info(f"Found change, VC VM SystemID: {vc_SystemID}, NB VM SystemID: {nb_SystemID}")
+
                 # TODO: Set primary IPs on the VM if they are changed, rest is defined on the interface associated to the VM
 
-                if vcpu_Changed or memory_mb_Changed or comment_Changed or disk_Changed:
+                if vcpu_Changed or memory_mb_Changed or comment_Changed or disk_Changed or custom_fields_Changed:
                     logger.info(f"Updating VM: {nbvm1.name} in netbox, since changes was detected!")
                     
                     nbvm1_update = netbox_client.virtualization.virtual_machines.get(nbvm1.raw_netbox_api_record.id)
@@ -181,6 +192,8 @@ def update_netbox():
                         nbvm1_update.comments = vcvm.comment
                     if disk_Changed:
                         nbvm1_update.disk = vcvm.disk_gb
+                    if custom_fields_Changed:
+                        nbvm1_update.custom_fields["SystemID"] = vcvm.custom_attributes["SystemID"]
 
                     if nbvm1_update.save():
                         logger.info("Successfully updated VM object in netbox")
