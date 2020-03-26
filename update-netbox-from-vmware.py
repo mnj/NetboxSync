@@ -17,6 +17,12 @@ vcenter_content = None
 netbox_client = None
 logger = None
 
+vcenter_vms = []
+vcenter_clusters = []
+netbox_vms = []
+netbox_clusters = []
+netbox_interfaces = []
+
 class VMwareCluster:
     def __init__(self, name, vcenter_persistent_id, hosts):
         self.name = name
@@ -58,7 +64,7 @@ class NetboxInterface:
 
 @functools.lru_cache(maxsize=32)
 def get_vcenter_clusters():
-    vcenter_clusters = []
+    global vcenter_clusters
     
     # Get a list of datacenters in the vcenter
     vcenter_datacenters = vcenter_content.rootFolder.childEntity
@@ -74,7 +80,7 @@ def get_vcenter_clusters():
     return vcenter_clusters
 
 def get_netbox_clusters():
-    netbox_clusters = []
+    global netbox_clusters
 
     try:
         nb_clusters = netbox_client.virtualization.clusters.all()
@@ -88,11 +94,9 @@ def get_netbox_clusters():
             netbox_clusters.append( NetboxCluster( name = nb_cluster.name,
                                                    vcenter_persistent_id = nb_cluster.custom_fields.get('vcenter_persistent_id'),
                                                    raw_netbox_api_record = nb_cluster) )
-        
-    return netbox_clusters
 
 def get_netbox_interfaces():
-    netbox_interfaces = []
+    global netbox_interfaces
 
     try:
         nb_interfaces = netbox_client.virtualization.interfaces.all()
@@ -104,8 +108,6 @@ def get_netbox_interfaces():
     for nb_interface in nb_interfaces:
         netbox_interfaces.append( NetboxInterface( raw_netbox_api_record = nb_interface,
                                                    netbox_vm_id = nb_interface.virtual_machine.id ) )
-        
-    return netbox_interfaces
 
 def update_netbox():
 
@@ -355,8 +357,8 @@ def update_netbox():
                 logger.exception(ex)
 
 def get_vcenter_vms():
-    vcenter_vms = []
-    
+    global vcenter_vms
+
     vmsView = vcenter_content.viewManager.CreateContainerView( vcenter_content.rootFolder, [vim.VirtualMachine], True )
 
     vm_properties = [ "name", "config.instanceUuid", "summary.config.numCpu", "summary.config.memorySizeMB",
@@ -475,8 +477,7 @@ def _get_vcenter_vms(container_view, vm_properties):
 
 @functools.lru_cache(maxsize=32)
 def _vcenter_get_clustername(host):
-    clusters = get_vcenter_clusters()
-    for cluster in clusters:
+    for cluster in vcenter_clusters:
         for cluster_host in cluster.hosts:
             if cluster_host.endswith(host):
                 return cluster.name
@@ -494,7 +495,7 @@ def _vcenter_get_customfield_fieldname(available_fields, custom_field):
             return x.name
 
 def get_netbox_vms():
-    netbox_vms = []
+    global netbox_vms
 
     try:
         nb_vms = netbox_client.virtualization.virtual_machines.all()
@@ -507,8 +508,6 @@ def get_netbox_vms():
         netbox_vms.append( NetboxVM( name = nb_vm.name,
                                      vcenter_persistent_id = nb_vm.custom_fields.get('vcenter_persistent_id'),
                                      raw_netbox_api_record = nb_vm ) )
-    
-    return netbox_vms
 
 def debug_print_object_info(obj):
     print(">x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>x>")
@@ -579,6 +578,12 @@ def main():
     
     initialize_vcenter_connection()
     initialize_netbox_client()
+
+    get_vcenter_clusters()
+    get_vcenter_vms()
+    get_netbox_clusters()
+    get_netbox_vms()
+    get_netbox_interfaces()
 
     update_netbox()
 
