@@ -200,6 +200,64 @@ def update_netbox():
                         custom_fields_Changed = True
                         logger.info(f"Found change, VC VM SystemID: {vc_SystemID}, NB VM SystemID: {nb_SystemID}")
 
+                # This whole code is too complicated, figure out a better way
+                # # Check if the VM is set to sync interfaces automatically, if so, check if we need to update anything
+                # if nbvm1.raw_netbox_api_record.custom_fields["interface_sync_enabled"] is not None and nbvm1.raw_netbox_api_record.custom_fields["interface_sync_enabled"] == True:
+                #     logger.info(f"VM: {nbvm1.name}, We should update this VMs interfaces if they are changed")
+                    
+                #     # Get the existing netbox interfaces for this VM
+                #     nb_vm_interfaces = []
+                #     for x1 in netbox_interfaces:
+                #         if int(x1.raw_netbox_api_record.virtual_machine.id) == int(nbvm1.raw_netbox_api_record.id):
+                #             nb_vm_interfaces.append( x1.raw_netbox_api_record )
+                #     # logger.warn(f"arr size: {len(nb_vm_interfaces) } cnt = {nb_vm_interfaces} ")
+ 
+                #     # Look at returned nics from vcenter
+                #     for nic1 in vcvm.nics:
+                #         found_nb_interface = False
+                #         for nic2 in nb_vm_interfaces:
+                #             logger.warn(f" nic1 type: { type(nic1)}, nic1 name: { nic1['label'] }")
+                #             logger.warn(f" nic2 type: { type(nic2)}, nic2 name: { nic2.name }")
+                #             if nic1['label'] == nic2.name:
+                #                 logger.info(f"Found interface in both NB and VC, checking if there is any changes to associated IPs")
+                #                 found_nb_interface = True
+
+                #                 # We found an existing interface, check if the associated IP's match each other
+                #                 try:
+                #                     print(nic2.virtual_machine.id)
+                #                     nb_ips = netbox_client.ipam.ip_addresses.filter(virtual_machine_id = nic2.virtual_machine.id )
+                #                     # debug_print_object_info(nb_ips)
+                #                     if nb_ips is not None:
+                #                         for nb_ip in nb_ips:
+                #                             found_nb_ip = False
+                #                             for vc_ip in nic1["ipAddresses"]:
+                #                                 if vc_ip == nb_ip.address:
+                #                                     logger.info("Found IP in both VC and NB, nothing to do")
+                #                                     found_nb_ip = True
+                #                             if found_nb_ip is not True:
+                #                                 logger.info("Did not find IP in NB")
+                #                             debug_print_netbox_object(nb_ip)
+
+                #                 except Exception as ex2:
+                #                     logger.warn("Failed retrieving IPs for the VM object in netbox")
+                #                     logger.exception(ex2)
+
+                #                 debug_print_netbox_object(nic2)
+
+                #         if found_nb_interface is not True:
+                #             logger.info(f"We did not find the interface in NB, creating it")
+                #             # We have a new interface in VC, that isnt in netbox, create it
+                    
+                #     for nic3 in nb_vm_interfaces:
+                #         found_vc_interface = False
+                #         for nic4 in vcvm.nics:
+                #             if nic3.name == nic4['label']:
+                #                 found_vc_interface = True
+
+                #         if found_vc_interface is not True:
+                #             logger.info(f"We did not find the interface in VC, delete it from netbox")
+                #             # We did not find the NB interface in vcenter, delete it
+
                 # TODO: Set primary IPs on the VM if they are changed, rest is defined on the interface associated to the VM
 
                 if vcpu_Changed or memory_mb_Changed or comment_Changed or disk_Changed or custom_fields_Changed:
