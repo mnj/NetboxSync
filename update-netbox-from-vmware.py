@@ -30,7 +30,7 @@ class NetboxCluster:
         self.raw_netbox_api_record = raw_netbox_api_record
 
 class VMwareVM:
-    def __init__(self, name, uuid, vcpu, memory_mb, disk_gb, comment, power_state, vmtools_status, primary_ipaddress, is_template, custom_attributes, cluster_name):
+    def __init__(self, name, uuid, vcpu, memory_mb, disk_gb, comment, power_state, vmtools_status, nics, primary_ipaddress, is_template, custom_attributes, cluster_name ):
         self.name = name
         self.uuid = uuid
         self.vcpu = vcpu
@@ -39,6 +39,7 @@ class VMwareVM:
         self.comment = comment
         self.power_state = power_state
         self.vmtools_status = vmtools_status
+        self.nics = nics
         self.primary_ipaddress = primary_ipaddress
         self.is_template = is_template
         self.custom_attributes = custom_attributes
@@ -49,6 +50,11 @@ class NetboxVM:
             self.name = name
             self.vcenter_persistent_id = vcenter_persistent_id
             self.raw_netbox_api_record = raw_netbox_api_record
+
+class NetboxInterface:
+    def __init__(self, raw_netbox_api_record, netbox_vm_id):
+            self.raw_netbox_api_record = raw_netbox_api_record
+            self.netbox_vm_id = netbox_vm_id
 
 @functools.lru_cache(maxsize=32)
 def get_vcenter_clusters():
@@ -84,6 +90,22 @@ def get_netbox_clusters():
                                                    raw_netbox_api_record = nb_cluster) )
         
     return netbox_clusters
+
+def get_netbox_interfaces():
+    netbox_interfaces = []
+
+    try:
+        nb_interfaces = netbox_client.virtualization.interfaces.all()
+    except Exception as ex: 
+        logger.error("Failed getting a list of netbox interfaces")
+        logger.exception(ex)
+        raise SystemExit(-1)
+    
+    for nb_interface in nb_interfaces:
+        netbox_interfaces.append( NetboxInterface( raw_netbox_api_record = nb_interface,
+                                                   netbox_vm_id = nb_interface.virtual_machine.id ) )
+        
+    return netbox_interfaces
 
 def update_netbox():
 
@@ -130,6 +152,7 @@ def update_netbox():
 
     vcenter_vms = get_vcenter_vms()
     netbox_vms = get_netbox_vms()
+    netbox_interfaces = get_netbox_interfaces()
 
     # Find VMs present in netbox, but not in vsphere, and add comment
     # about it, on the netbox cluster object.
@@ -225,6 +248,7 @@ def update_netbox():
                 netbox_cluster_id = _netbox_get_cluster_id(netbox_clusters, vcvm2.cluster_name)
                 custom_fields = {}
                 custom_fields["vcenter_persistent_id"] = vcvm2.uuid
+                custom_fields["interface_sync_enabled"] = True
                 
                 comment = ""
                 if vcvm2.comment is not None:
@@ -234,6 +258,7 @@ def update_netbox():
                 if "SystemID" in vcvm2.custom_attributes:
                     custom_fields["SystemID"] = vcvm2.custom_attributes["SystemID"]
                 
+                # Create the VM object in netbox
                 nbvm2_create = netbox_client.virtualization.virtual_machines.create( name = vcvm2.name,
                                                                                      cluster = netbox_cluster_id,
                                                                                      comments = comment,
@@ -241,6 +266,32 @@ def update_netbox():
                                                                                      vcpus = vcvm2.vcpu,
                                                                                      memory = vcvm2.memory_mb )
                 logger.info(f"VM object: { nbvm2_create } created successfully in netbox")
+                
+                # Create a new interface for each virtual nic for the VM in netbox:
+                for nic in vcvm2.nics:
+                    nb_interface_create = netbox_client.virtualization.interfaces.create( name = nic["label"],
+                                                                                          type = "virtual",
+                                                                                          mac_address = nic["macAddress"],
+                                                                                          virtual_machine = nbvm2_create.id )
+
+                    # If we have any ip addresses from VMware tools, try and get each ip from netbox, 
+                    # and connect it to the interface we just created, we dont create new IP addresses 
+                    # that are not already present in netbox, as it should be the source of truth
+                    for ip in nic["ipAddresses"]:
+                        try:
+                            netbox_ip = netbox_client.ipam.ip_addresses.get(address=ip.with_prefixlen)
+                            if netbox_ip is not None:
+                                logger.info(f"VM: {vcvm2.name}, will add ip: { netbox_ip.address } to nic with mac: {nic['macAddress']}")
+                                
+                                netbox_ip.interface = nb_interface_create.id
+                                if netbox_ip.save():
+                                    logger.info("Successfully updated interface IP")
+                            else:
+                                logger.info(f"Could not find ip address: { ip.with_prefixlen } in netbox")
+                        except Exception as ex2:
+                            logger.warn("Failed retrieving IP address from netbox")
+                            logger.exception(ex2)
+
             except Exception as ex:
                 logger.warn("Failed creating the VM object in netbox")
                 logger.exception(ex)
@@ -252,7 +303,8 @@ def get_vcenter_vms():
 
     vm_properties = [ "name", "config.instanceUuid", "summary.config.numCpu", "summary.config.memorySizeMB",
                       "config.annotation", "config.template", "runtime.powerState", "guest.toolsRunningStatus",
-                      "guest.ipAddress", "summary.runtime.host", "availableField", "customValue", "config.hardware.device" ]
+                      "guest.ipAddress", "summary.runtime.host", "availableField", "customValue", "config.hardware.device",
+                      "guest.net" ]
     
     vm_data = _get_vcenter_vms(container_view=vmsView, vm_properties=vm_properties)
 
@@ -271,9 +323,36 @@ def get_vcenter_vms():
         vmtools_status = vm["guest.toolsRunningStatus"]
         
         disk_size_gb = 0
+        vm_nics = []
         for device in vm["config.hardware.device"]:
              if isinstance(device, vim.vm.device.VirtualDisk):
                 disk_size_gb += (device.capacityInKB / 1024 / 1024)
+             elif isinstance(device, vim.vm.device.VirtualEthernetCard):
+                device_info = {}
+                device_info["macAddress"] = device.macAddress
+                device_info["label"] = device.deviceInfo.label
+                device_info["connected"] = device.connectable.connected
+                vm_nics.append( device_info )
+        
+        # If VMware tools are running, try to get the IPs reported back from the VMware tools
+        # This is really buggy territory, even if VMware tools are running, they could return 
+        # anything from nothing to wrong IPs, or anything else really depending on the version/os installed.
+        # Some Linux versions of the VMware tools seems really bad (returning the same ips for all nics / 
+        # interfaces present on the VM)
+        if vmtools_status == "guestToolsRunning":
+            logger.info(f"VM: { vm['name'] } - VMware Tools running, trying to get IPs reported back")
+
+            for nic1 in vm["guest.net"]:
+                for nic2 in vm_nics:
+                    if nic2["macAddress"] == nic1.macAddress:
+                        interface_addresses = []
+                        if nic1.ipConfig is not None: # Might return nothing even if vmware tools are running
+                            for addr in nic1.ipConfig.ipAddress:
+                                logger.info(f"VM: {vm['name']}, nic: {addr.ipAddress}, mac: { nic1.macAddress }")
+                                ip_address = ipaddress.ip_interface(f"{ addr.ipAddress }/{ addr.prefixLength }" )
+                                interface_addresses.append(ip_address)
+                            
+                            nic2["ipAddresses"] = interface_addresses
         
         # The API for getting _all_ ips are broken, the limit seems to be around 4 IP addresses are being returned
         # So for now, just take whatever IP is listed as the default, and figure out a way to fix it later on
@@ -298,6 +377,7 @@ def get_vcenter_vms():
                                       comment = comment,
                                       power_state = power_state,
                                       vmtools_status = vmtools_status,
+                                      nics = vm_nics,
                                       primary_ipaddress = primary_ipaddress,
                                       is_template = is_template,
                                       custom_attributes = custom_attributes,
