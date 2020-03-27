@@ -213,10 +213,8 @@ def update_netbox():
     netbox_vms = get_netbox_vms()
     netbox_interfaces = get_netbox_interfaces()
 
-    # Find VMs present in netbox, but not in vsphere, and add comment
-    # about it, on the netbox cluster object.
-    # And update existing vms with latest information from vcenter if
-    # they already exists, and something has changed
+    # Find VMs present in netbox, but not in vsphere, and add comment about it, on the netbox cluster object.
+    # And update existing vms with latest information from vcenter if they already exists, and something has changed.
     for nbvm1 in netbox_vms:
         if any(vcvm1.uuid == nbvm1.vcenter_persistent_id for vcvm1 in vcenter_vms):
             logger.info(f"VM: {nbvm1.name} with vCenter_ID: {nbvm1.vcenter_persistent_id} exists in vcenter, checking if anything has changed")
