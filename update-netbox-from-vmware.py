@@ -224,29 +224,35 @@ def update_netbox():
             # next will raise errors if not found!, but we check above with any() so it is safe here
             vcvm = next(x for x in vcenter_vms if x.uuid == nbvm1.vcenter_persistent_id)
 
+            # Convert the netbox and vcenter VM objects into a base VM, we can compare to each other etc.
+            nb_basevm = _get_basevm_from_netbox_vm(nbvm1)
+            vc_basevm = _get_basevm_from_vcenter_vm(vcvm)
+
+            # Check if there is any differences between the vcenter/netbox VM object, bail early, if they are equal
+            if nb_basevm == vc_basevm:
+                logger.warn(f"The VM object: {nb_basevm.name} in both Netbox and vcenter looks the same, skipping early since there is no change.")
+                continue
+
+            # Figure out what exactly changed between netbox <> vcenter for the VM, and update accordingly
             try:
                 vcpu_Changed = False
                 memory_mb_Changed = False
                 comment_Changed = False
                 disk_Changed = False
                 custom_fields_Changed = False
-              
-                # Not happy with this way of detecting changes, but it works..
-                if int(vcvm.vcpu) != int(nbvm1.raw_netbox_api_record.vcpus):
+                
+                if vc_basevm.vcpu != nb_basevm.vcpu:
                     vcpu_Changed = True
-                    nbvm1_update.vcpus = vcvm.vcpu
-                    logger.info(f"Found change, VC VM vcpu: {vcvm.vcpu}, NB VM vcpu: {nbvm1.raw_netbox_api_record.vcpus}")
-                elif int(vcvm.memory_mb) != int(nbvm1.raw_netbox_api_record.memory):
+                    logger.info(f"Found change, VC VM vcpu: {vc_basevm.vcpu}, NB VM vcpu: {nb_basevm.vcpu}")
+                elif vc_basevm.memory_mb != nb_basevm.memory_mb:
                     memory_mb_Changed = True
-                    nbvm1_update.memory = vcvm.memory_mb
-                    logger.info(f"Found change, VC VM memory: {vcvm.memory_mb}, NB VM memory: {nbvm1.raw_netbox_api_record.memory}")
-                elif vcvm.comment != nbvm1.raw_netbox_api_record.comments and vcvm.comment is not None:
+                    logger.info(f"Found change, VC VM memory: {vc_basevm.memory_mb}, NB VM memory: {nb_basevm.memory_mb}")
+                elif vc_basevm.comment != nb_basevm.comment and nb_basevm.comment is not None:
                     comment_Changed = True
-                    logger.info(f"Found change, VC VM comment: {vcvm.comment}, NB VM comment: {nbvm1.raw_netbox_api_record.comments}")
-                elif nbvm1.raw_netbox_api_record.disk is None or int(vcvm.disk_gb) != int(nbvm1.raw_netbox_api_record.disk):
+                    logger.info(f"Found change, VC VM comment: {vc_basevm.comment}, NB VM comment: {nb_basevm.comment}")
+                elif nb_basevm.disk_gb is None or vc_basevm.disk_gb != nb_basevm.disk_gb:
                     disk_Changed = True
-                    nbvm1_update.disk = vcvm.disk_gb
-                    logger.info(f"Found change, VC VM disk size (GB): {vcvm.disk_gb}, NB VM disk size (GB): {nbvm1.raw_netbox_api_record.disk}")
+                    logger.info(f"Found change, VC VM disk size (GB): {vc_basevm.disk_gb}, NB VM disk size (GB): {nb_basevm.disk_gb}")
                 
                 # Our company specific custom netbox attribute, if it's defined, ignored otherwise
                 # TODO: This should be optimized better to handle any custem fields, not just our own
