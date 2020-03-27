@@ -413,6 +413,54 @@ def update_netbox():
                 logger.warn("Failed creating the VM object in netbox")
                 logger.exception(ex)
 
+def _get_basevm_from_netbox_vm(netbox_vm):
+    nics = []
+    for netbox_interface in netbox_interfaces:
+        if int(netbox_interface.raw_netbox_api_record.virtual_machine.id) == int(netbox_vm.raw_netbox_api_record.id):
+            ip_addresses = []
+            nb_ips = netbox_client.ipam.ip_addresses.filter( virtual_machine_id = netbox_vm.raw_netbox_api_record.id)
+            for nb_ip in nb_ips:
+                if nb_ip.interface.id == netbox_interface.raw_netbox_api_record.id:
+                    ip_addresses.append( nb_ip.address )
+
+            nics.append( GenericNetworkInterface( name = netbox_interface.raw_netbox_api_record.name,
+                                                  connected = netbox_interface.raw_netbox_api_record.enabled,
+                                                  mac_address = netbox_interface.raw_netbox_api_record.mac_address,
+                                                  ip_addresses = ip_addresses ) )
+
+    base_vm = GenericVM( name = netbox_vm.name, 
+                         persistent_id = netbox_vm.vcenter_persistent_id,
+                         vcpu = netbox_vm.raw_netbox_api_record.vcpus,
+                         memory_mb = netbox_vm.raw_netbox_api_record.memory,
+                         disk_gb = netbox_vm.raw_netbox_api_record.disk,
+                         comment = netbox_vm.raw_netbox_api_record.comments,
+                         nics = nics )
+
+    return base_vm
+
+def _get_basevm_from_vcenter_vm(vcenter_vm):
+    nics = []
+    for nic in vcenter_vm.nics:
+        ip_addresses = []
+        if "ipAddresses" in nic:
+            for ip in nic["ipAddresses"]:
+                ip_addresses.append( str(ip) )
+
+        nics.append( GenericNetworkInterface( name = nic['label'],
+                                              connected = nic['connected'],
+                                              mac_address = nic['macAddress'],
+                                              ip_addresses = ip_addresses ) )
+
+    base_vm = GenericVM( name = vcenter_vm.name, 
+                         persistent_id = vcenter_vm.uuid,
+                         vcpu = vcenter_vm.vcpu, 
+                         memory_mb = vcenter_vm.memory_mb,
+                         disk_gb = vcenter_vm.disk_gb,
+                         comment = vcenter_vm.comment,
+                         nics = nics )
+
+    return base_vm
+
 def get_vcenter_vms():
     global vcenter_vms
 
