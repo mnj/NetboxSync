@@ -35,6 +35,63 @@ class NetboxCluster:
         self.vcenter_persistent_id = vcenter_persistent_id
         self.raw_netbox_api_record = raw_netbox_api_record
 
+class GenericVM:
+    def __init__(self, name, persistent_id, vcpu, memory_mb, disk_gb, comment, nics = None):
+        self.name = name
+        self.persistent_id = persistent_id
+        self.vcpu = int(vcpu)
+        self.memory_mb = int(memory_mb)
+        self.disk_gb = int(disk_gb)
+        self.comment = comment
+        if nics is None:
+            nics = []
+        self.nics = nics
+
+    def __repr__(self):
+        return str.format("{{name: {0}, persistent_id: {1}, nics: {2}, vcpu: {3}, memory_mb: {4}, disk_gb: {5}, comment: {6} }}", 
+            self.name,
+            self.persistent_id,
+            self.nics,
+            self.vcpu,
+            self.memory_mb,
+            self.disk_gb,
+            self.comment)
+
+    def __eq__(self, other):
+        if isinstance(other, GenericVM):
+            return (self.name == other.name and
+                   self.persistent_id == other.persistent_id and
+                   self.nics == other.nics and
+                   self.vcpu == other.vcpu and
+                   self.memory_mb == other.memory_mb and
+                   self.disk_gb == other.disk_gb and 
+                   self.comment == other.comment)
+        return False
+
+class GenericNetworkInterface:
+    def __init__(self, name, mac_address, connected, ip_addresses = None):
+        self.name = name
+        self.connected = connected
+        self.mac_address = str(mac_address).upper()
+        if ip_addresses is None:
+            ip_addresses = []
+        self.ip_addresses = ip_addresses
+    
+    def __repr__(self):
+        return str.format("{{name: {0}, mac_address: {1}, connected: {2}, ip_addresses: {3} }}",
+            self.name,
+            self.mac_address,
+            self.connected,
+            self.ip_addresses)
+
+    def __eq__(self, other):
+        if isinstance(other, GenericNetworkInterface):
+            return ( self.name == other.name and
+                     self.connected == other.connected and
+                     self.mac_address == other.mac_address and
+                     self.ip_addresses == other.ip_addresses)
+        return False
+
 class VMwareVM:
     def __init__(self, name, uuid, vcpu, memory_mb, disk_gb, comment, power_state, vmtools_status, nics, primary_ipaddress, is_template, custom_attributes, cluster_name ):
         self.name = name
