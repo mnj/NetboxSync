@@ -1,5 +1,10 @@
 Script to update netbox with vsphere VMs
 
+---
+
+NOTE: Under active development atm, not suitable for general use yet!
+
+---
 I didn't like the options / existing scripts I found, so decided to create my own instead
 
 We dont push IP addresses that doesn't already exist in Netbox, as Netbox should be the source of truth for the desired network state.
