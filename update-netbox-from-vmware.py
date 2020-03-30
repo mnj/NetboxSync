@@ -12,6 +12,10 @@ from pyVmomi import vmodl
 from pyVmomi import vim
 from pprint import pprint
 
+# Additional custom attributes to push from vcenter -> netbox custom fields, leave it empty [] if 
+# you don't want to push any extra vcenter custom attributes from the vcenter.
+netbox_custom_fields = [{ "netbox_fieldname" : "SystemID", "vcenter_custom_attribute" : "SystemID" }]
+
 vcenter_session = None
 vcenter_content = None
 netbox_client = None
@@ -36,7 +40,7 @@ class NetboxCluster:
         self.raw_netbox_api_record = raw_netbox_api_record
 
 class GenericVM:
-    def __init__(self, name, persistent_id, vcpu, memory_mb, disk_gb, comment, nics = None):
+    def __init__(self, name, persistent_id, vcpu, memory_mb, disk_gb, comment, nics = None, custom_fields = None, interface_sync_enabled = False):
         self.name = name
         self.persistent_id = persistent_id
         self.vcpu = int(vcpu)
@@ -46,26 +50,36 @@ class GenericVM:
         if nics is None:
             nics = []
         self.nics = nics
+        if custom_fields is None:
+            custom_fields = []
+        self.custom_fields = custom_fields
+        if interface_sync_enabled is None:
+            interface_sync_enabled = False
+        self.interface_sync_enabled = interface_sync_enabled
 
     def __repr__(self):
-        return str.format("{{name: {0}, persistent_id: {1}, nics: {2}, vcpu: {3}, memory_mb: {4}, disk_gb: {5}, comment: {6} }}", 
+        return str.format("{{name: {0}, persistent_id: {1}, nics: {2}, vcpu: {3}, memory_mb: {4}, disk_gb: {5}, comment: {6}, custom_fields: {7}, interface_sync_enabled: {8} }}", 
             self.name,
             self.persistent_id,
             self.nics,
             self.vcpu,
             self.memory_mb,
             self.disk_gb,
-            self.comment)
+            self.comment,
+            self.custom_fields,
+            self.interface_sync_enabled)
 
     def __eq__(self, other):
         if isinstance(other, GenericVM):
+            # We purposely do not include interface_sync_enabled in the comparison, since the vcenter has no idea about it
             return (self.name == other.name and
                    self.persistent_id == other.persistent_id and
                    self.nics == other.nics and
                    self.vcpu == other.vcpu and
                    self.memory_mb == other.memory_mb and
                    self.disk_gb == other.disk_gb and 
-                   self.comment == other.comment)
+                   self.comment == other.comment and
+                   self.custom_fields == other.custom_fields)
         return False
 
 class GenericNetworkInterface:
@@ -223,7 +237,7 @@ def update_netbox_vms():
             if nb_basevm == vc_basevm:
                 logger.warn(f"The VM object: {nb_basevm.name} in both Netbox and vcenter looks the same, skipping early since there is no change.")
                 continue
-
+            
             # Figure out what exactly changed between netbox <> vcenter for the VM, and update accordingly
             try:
                 vcpu_Changed = False
@@ -234,16 +248,16 @@ def update_netbox_vms():
                 
                 if vc_basevm.vcpu != nb_basevm.vcpu:
                     vcpu_Changed = True
-                    logger.info(f"Found change, VC VM vcpu: {vc_basevm.vcpu}, NB VM vcpu: {nb_basevm.vcpu}")
+                    logger.info(f"Found change (vcpu), VC VM vcpu: {vc_basevm.vcpu}, NB VM vcpu: {nb_basevm.vcpu}")
                 elif vc_basevm.memory_mb != nb_basevm.memory_mb:
                     memory_mb_Changed = True
-                    logger.info(f"Found change, VC VM memory: {vc_basevm.memory_mb}, NB VM memory: {nb_basevm.memory_mb}")
+                    logger.info(f"Found change (memory), VC VM memory: {vc_basevm.memory_mb}, NB VM memory: {nb_basevm.memory_mb}")
                 elif vc_basevm.comment != nb_basevm.comment and nb_basevm.comment is not None:
                     comment_Changed = True
-                    logger.info(f"Found change, VC VM comment: {vc_basevm.comment}, NB VM comment: {nb_basevm.comment}")
+                    logger.info(f"Found change (comment), VC VM comment: {vc_basevm.comment}, NB VM comment: {nb_basevm.comment}")
                 elif nb_basevm.disk_gb is None or vc_basevm.disk_gb != nb_basevm.disk_gb:
                     disk_Changed = True
-                    logger.info(f"Found change, VC VM disk size (GB): {vc_basevm.disk_gb}, NB VM disk size (GB): {nb_basevm.disk_gb}")
+                    logger.info(f"Found change (disk), VC VM disk size (GB): {vc_basevm.disk_gb}, NB VM disk size (GB): {nb_basevm.disk_gb}")
                 
                 # Our company specific custom netbox attribute, if it's defined, ignored otherwise
                 # TODO: This should be optimized better to handle any custem fields, not just our own
@@ -256,12 +270,14 @@ def update_netbox_vms():
                         custom_fields_Changed = True
                         logger.info(f"Found change, VC VM SystemID: {vc_SystemID}, NB VM SystemID: {nb_SystemID}")
 
-                # This whole code is too complicated, figure out a better way
-                # # Check if the VM is set to sync interfaces automatically, if so, check if we need to update anything
+                # Check if the VM has interface sync enabled, if so, check if there is any changes
+                if nb_basevm.interface_sync_enabled:
+                    if nb_basevm.nics != vc_basevm.nics:
+                        logger.info(f"Found change (nics), VC VM nics: {vc_basevm.nics}, NB VM nics: {nb_basevm.nics}")
+                        
+                        # Update nics seperately as its more complicated then simple properties like below
+                        _update_netbox_vm_interfaces(nb_basevm, vc_basevm, nbvm1.raw_netbox_api_record.id)
                 
-                
-                # TODO: Set primary IPs on the VM if they are changed, rest is defined on the interface associated to the VM
-
                 if vcpu_Changed or memory_mb_Changed or comment_Changed or disk_Changed or custom_fields_Changed:
                     logger.info(f"Updating VM: {nbvm1.name} in netbox, since changes was detected!")
                     
@@ -276,7 +292,7 @@ def update_netbox_vms():
                     if disk_Changed:
                         nbvm1_update.disk = vcvm.disk_gb
                     if custom_fields_Changed:
-                        nbvm1_update.custom_fields["SystemID"] = vcvm.custom_attributes["SystemID"]
+                        nbvm1_update.custom_fields["SystemID"] = vcvm.custom_attributes["SystemID"]                    
 
                     if nbvm1_update.save():
                         logger.info("Successfully updated VM object in netbox")
@@ -356,6 +372,126 @@ def update_netbox_vms():
                 logger.warn("Failed creating the VM object in netbox")
                 logger.exception(ex)
 
+def _update_netbox_vm_interfaces(netbox_vm, vcenter_vm, netbox_vm_id):
+
+    try:
+        for nic in vcenter_vm.nics:
+            # Using the mac address as a unique id, check if netbox has an interface with this mac address.
+            if any(str(x.mac_address).upper() == str(nic.mac_address).upper() for x in netbox_vm.nics):
+                # We have a interface with this mac address, check what has changed, if anything
+                netbox_nic = next(x for x in netbox_vm.nics if str(x.mac_address).upper() == str(nic.mac_address).upper())
+ 
+                nameChanged = False
+                connectedChanged = False
+                ipaddressesChanged = False
+
+                if nic.name != netbox_nic.name:
+                    nameChanged = True
+                    logger.info(f"Found nic change, VC VM nic name: {nic.name}, NB VM nic name: {netbox_nic.name}")
+                elif nic.connected != netbox_nic.connected:
+                    connectedChanged = True
+                    logger.info(f"Found nic change, VC VM nic connected: {nic.connected}, NB VM nic connected: {netbox_nic.connected}")
+                elif nic.ip_addresses != netbox_nic.ip_addresses:
+                    ipaddressesChanged = True
+                    logger.info(f"Found nic change, VC VM nic ipaddresses: {nic.ip_addresses}, NB VM nic ipaddressess: {netbox_nic.ip_addresses}")
+
+                if nameChanged or connectedChanged:
+                    try:
+                        logger.info(f"Updating nic in Netbox for VM: {vcenter_vm.name}")
+
+                        netbox_interface_update = netbox_client.virtualization.interfaces.get( virtual_machine_id = netbox_vm_id, mac_address = nic.mac_address )
+                        
+                        if nameChanged:
+                            netbox_interface_update.name = nic.name
+                        if connectedChanged:
+                            netbox_interface_update.enabled = nic.connected
+
+                        if netbox_interface_update.save():
+                            logger.info(f"Successfully updated nic for interface with mac address: {nic.mac_address}")
+                        else:
+                            logger.warn(f"Failed updating nic for interface with mac address: {nic.mac_address}")
+                    except Exception as ex2:
+                        logger.warn("Failed updating nic in Netbox")
+                        logger.exception(ex2)
+
+                if ipaddressesChanged:
+                    for ip in nic.ip_addresses:
+                        if any(x.ip_address == ip.ip_address for x in netbox_nic.ip_addresses):
+                            logger.warn(f"Found IP address: {ip} in Netbox for VM: {vcenter_vm.name}, on nic with mac address: {nic.mac_address}")
+                        else:
+                            logger.warn(f"Did NOT find IP address: {ip} in Netbox for VM: {vcenter_vm.name}, on nic with mac address: {nic.mac_address}")
+                            
+                            # Try adding the missing IP, but check to make sure, that the IP address already exist in netbox
+                            try:
+                                netbox_ip = netbox_client.ipam.ip_addresses.get(address=ip)
+                                if netbox_ip is not None:
+                                    logger.info(f"VM: { vcenter_vm.name }, will add ip: { netbox_ip.address } to nic with mac address: { nic.mac_address }")
+                                    try:
+                                        netbox_interface = netbox_client.virtualization.interfaces.get( virtual_machine_id = netbox_vm_id, mac_address = nic.mac_address )
+                                        
+                                        netbox_ip.interface = netbox_interface.id
+                                        if netbox_ip.save():
+                                            logger.info("Successfully updated interface IP")
+                                    except Exception as ex3:
+                                        logger.warn("Failed retrieving interface from Netbox")
+                                        logger.exception(ex3)
+                                else:
+                                    logger.info(f"Could not find IP address: { ip } in Netbox")
+                            except Exception as ex2:
+                                logger.warn("Failed retrieving IP address from netbox")
+                                logger.exception(ex2)
+            else:
+                logger.warn(f"Did not find an interface with mac addr: {nic.mac_address}, with interface name: {nic.name} for VM: {vcenter_vm.name} in Netbox, adding the interface")
+
+                # Create the netbox interface
+                nb_interface_create = netbox_client.virtualization.interfaces.create( name = nic.name,
+                                                                                      type = "virtual",
+                                                                                      mac_address = nic.mac_address,
+                                                                                      virtual_machine = netbox_vm_id )
+                for ip in nic.ip_addresses:
+                    try:
+                        netbox_ip = netbox_client.ipam.ip_addresses.get(address=ip)
+                        if netbox_ip is not None:
+                            logger.info(f"VM: {vcenter_vm.name}, will add ip: { ip } to nic with mac: {nic.mac_address}")
+                                
+                            netbox_ip.interface = nb_interface_create.id
+                            if netbox_ip.save():
+                                logger.info("Successfully updated interface IP")
+                            else:
+                                logger.info(f"Could not find ip address: { ip } in netbox")
+                    except Exception as ex2:
+                        logger.warn("Failed retrieving IP address from netbox")
+                        logger.exception(ex2)
+
+        for nic2 in netbox_vm.nics:
+            # Check if netbox has interfaces not in vcenter
+            if any(str(x.mac_address).upper() == str(nic2.mac_address).upper() for x in vcenter_vm.nics):
+                logger.warn(f"NIC with mac address: {nic2.mac_address} exists in both Netbox and vcenter, nothing to do")
+            else:
+                logger.warn(f"NIC with mac address: {nic2.mac_address} does not exist in vcenter for the VM, removing it from the VM")
+
+                try:
+                    # Grab the interface first, this could potentially return the wrong interface if it has no 
+                    # mac address, for now bail out if the interface in netbox doesnt have a mac address
+                    if nic2.mac_address is None or nic2.mac_address == "NONE":
+                        logger.warn(f"We can not safely delete this unused interface for VM: {vcenter_vm.name} since the Netbox object has no mac address")
+                        continue
+                    else:
+                        netbox_interface = netbox_client.virtualization.interfaces.get( virtual_machine_id = netbox_vm_id, mac_address = nic2.mac_address )
+
+                        try: 
+                            if netbox_interface.delete():
+                                logger.info("Sucessfully deleted interface in netbox, that didnt exist in vcenter")
+                        except Exception as ex5:
+                            logger.warn("Failed deleting interface from netbox")
+                            logger.exception(ex5)
+                except Exception as ex4:
+                    logger.warn("Failed retrieving interface from netbox")
+                    logger.exception(ex4)
+    except Exception as ex:
+        logger.warn("Failed updating the VM in netbox")
+        logger.exception(ex)
+
 def _get_basevm_from_netbox_vm(netbox_vm):
     nics = []
     for netbox_interface in netbox_interfaces:
@@ -371,13 +507,27 @@ def _get_basevm_from_netbox_vm(netbox_vm):
                                                   mac_address = netbox_interface.raw_netbox_api_record.mac_address,
                                                   ip_addresses = ip_addresses ) )
 
+    valid_fields = netbox_custom_fields
+    custom_fields = []
+
+    for field in netbox_vm.raw_netbox_api_record.custom_fields:
+        if any(str(x['netbox_fieldname']).upper() == str(field).upper() for x in valid_fields):
+            custom_fields.append( { field : netbox_vm.raw_netbox_api_record.custom_fields.get(field) } )
+
+    if netbox_vm.raw_netbox_api_record.custom_fields.get('interface_sync_enabled') is not None:
+        interface_sync_enabled = netbox_vm.raw_netbox_api_record.custom_fields.get('interface_sync_enabled')
+    else:
+        interface_sync_enabled = None
+
     base_vm = GenericVM( name = netbox_vm.name, 
                          persistent_id = netbox_vm.vcenter_persistent_id,
                          vcpu = netbox_vm.raw_netbox_api_record.vcpus,
                          memory_mb = netbox_vm.raw_netbox_api_record.memory,
                          disk_gb = netbox_vm.raw_netbox_api_record.disk,
                          comment = netbox_vm.raw_netbox_api_record.comments,
-                         nics = nics )
+                         nics = nics,
+                         custom_fields = custom_fields,
+                         interface_sync_enabled = interface_sync_enabled)
 
     return base_vm
 
@@ -387,12 +537,25 @@ def _get_basevm_from_vcenter_vm(vcenter_vm):
         ip_addresses = []
         if "ipAddresses" in nic:
             for ip in nic["ipAddresses"]:
-                ip_addresses.append( str(ip) )
+                # Exclude IPv6 link local addresses
+                if ip.version == 6 and ip.is_link_local == True:
+                    continue
+                else:
+                    ip_addresses.append( str(ip) )
 
         nics.append( GenericNetworkInterface( name = nic['label'],
                                               connected = nic['connected'],
                                               mac_address = nic['macAddress'],
                                               ip_addresses = ip_addresses ) )
+
+    valid_fields = netbox_custom_fields
+    custom_fields = []
+
+    for field in vcenter_vm.custom_attributes:
+        if any(str(x['vcenter_custom_attribute']).upper() == str(field).upper() for x in valid_fields):
+            custom_fields.append( { field : vcenter_vm.custom_attributes.get(field) } )
+        else:
+            logger.debug(f"Did not find a mapping for vcenter custom attribute: {field}, skipping it")
 
     base_vm = GenericVM( name = vcenter_vm.name, 
                          persistent_id = vcenter_vm.uuid,
@@ -400,7 +563,8 @@ def _get_basevm_from_vcenter_vm(vcenter_vm):
                          memory_mb = vcenter_vm.memory_mb,
                          disk_gb = vcenter_vm.disk_gb,
                          comment = vcenter_vm.comment,
-                         nics = nics )
+                         nics = nics,
+                         custom_fields = custom_fields )
 
     return base_vm
 
@@ -456,7 +620,7 @@ def get_vcenter_vms():
                         interface_addresses = []
                         if nic1.ipConfig is not None: # Might return nothing even if vmware tools are running
                             for addr in nic1.ipConfig.ipAddress:
-                                logger.info(f"VM: {vm['name']}, nic: {addr.ipAddress}, mac: { nic1.macAddress }")
+                                logger.debug(f"VM: {vm['name']}, nic: {addr.ipAddress}, mac: { nic1.macAddress }")
                                 ip_address = ipaddress.ip_interface(f"{ addr.ipAddress }/{ addr.prefixLength }" )
                                 interface_addresses.append(ip_address)
                             
