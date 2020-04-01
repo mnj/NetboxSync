@@ -773,12 +773,17 @@ def initialize_logging():
     logger.setLevel(logging.DEBUG)
 
     ch = logging.StreamHandler()
-    ch.setLevel(logging.DEBUG)
+    ch.setLevel(logging.INFO)
+
+    fh = logging.FileHandler("netbox-sync.log")
+    fh.setLevel(logging.DEBUG)
     
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(funcName)s - %(levelname)s - %(message)s')
     ch.setFormatter(formatter)
+    fh.setFormatter(formatter)
     
     logger.addHandler(ch)
+    logger.addHandler(fh)
     
 def main():
     initialize_logging()
